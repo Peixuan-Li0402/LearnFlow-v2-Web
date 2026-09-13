@@ -42,15 +42,15 @@ test("removes disposable starter assets and keeps product metadata", async () =>
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
+    readFile(new URL("../wrangler.local.jsonc", import.meta.url), "utf8"),
   ]);
   assert.match(page, /HomeworkAgentApp/);
   assert.match(layout, /lang="zh-CN"/);
   assert.match(layout, /大学课程学习与期末冲刺 Agent/);
   assert.match(packageJson, /"version": "2\.0\.0"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.match(hosting, /"d1": "DB"/);
-  assert.match(hosting, /"r2": "UPLOADS"/);
+  assert.match(hosting, /"binding": "DB"/);
+  assert.match(hosting, /"binding": "UPLOADS"/);
   await access(new URL("../public/assistant-avatar.jpg", import.meta.url));
   await access(root);
 });

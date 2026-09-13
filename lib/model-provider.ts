@@ -1041,10 +1041,11 @@ export async function callModel(request: AgentRequest, signal?: AbortSignal): Pr
 
   if (request.action === "chat" && request.interaction?.kind === "FREEFORM" && solutionBlueprint) {
     const assistantMessage = await chatCompletion([
+      { role: "system", content: "准确性约束：不能为了通俗而改变定义。导数与方向导数是局部极限变化率，不是走完有限距离后的总变化量；若使用线性近似，必须明确小增量及适用限制。非单位方向向量的点积是沿参数路径的导数，不得说成完整步长的实际增量。先明确纠正学生的错误结论，不要以泛泛赞同开头。内部核对解释与已验证答案一致后再输出。" },
       { role: "system", content: "你是耐心的大学课程助教。依据已核对的解法，直接回应学生这次追问，调整讲解方式和例子，不要重复整道题，不要自行推进讲解进度。只输出中文 Markdown，数学使用 $...$ 或 $$...$$。不输出内部探索草稿。若学生要求未学过的方法，说明当前步骤并给出满足课程限制的等价解释。" },
       { role: "system", content: "如果上一轮提出了诊断问题，本轮必须先结合学生实际回答判断哪一点正确、哪一点需要补充，再用适合其基础的方式讲清。不要泛泛夸奖或机械重放原稿。学生已经掌握的内容简述，薄弱点给具体例子；最后只留一个针对性的理解检查。若学生要求直接讲或跳过，则不强制继续问答。" },
       { role: "user", content: JSON.stringify({ problem: request.problem, solution: solutionBlueprint, learnerProfile: request.project?.knowledgeCheckpoints, recentMessages: request.project?.teachingMessages?.slice(-8), question: request.message }) },
-    ], false, 2400, config.model, false, signal, undefined, 60_000);
+    ], false, 3000, config.solverModel, true, signal, 2048, 60_000);
     return normalizeAgentResponse({ provider: "model", assistantMessage, stage: request.project?.teachingStage === "CHECKING_PREREQUISITES" ? "EXPLAINING_METHOD" : request.project?.teachingStage || "EXPLAINING_METHOD", progress: request.project?.progress || 5, solutionBlueprint, answerBlocks: [], knowledgeCheckpoints: [] });
   }
 
@@ -1053,9 +1054,10 @@ export async function callModel(request: AgentRequest, signal?: AbortSignal): Pr
     const lesson = deliverVerifiedSection(request, solutionBlueprint);
     if (request.interaction.kind === "SKIP_SECTION") return lesson;
     const assistantMessage = await chatCompletion([
+      { role: "system", content: "准确性约束：通俗例子不能改变数学定义。变化率不等于有限距离上的总变化量，线性近似必须说明是局部小增量近似。沿参数路径的导数不能误称为走完整个向量的增量。不要继承历史回复中这些不严谨的措辞；发现时简短澄清。" },
       { role: "system", content: "依据已核对的教学板块和学生的真实反馈，组织这一板块的讲解。明确回应先前诊断暴露的误区，已掌握的略讲，薄弱的用例子和小步推导讲清。保留本板块关键数学结论与条件，不重算整题，不泄露探索草稿。结尾提出一个简短检查问题，等待学生回答。只输出中文Markdown及规范LaTeX。" },
       { role: "user", content: JSON.stringify({ verifiedLesson: lesson.assistantMessage, learnerProfile: request.project?.knowledgeCheckpoints, recentMessages: request.project?.teachingMessages?.slice(-8), request: request.message }) },
-    ], false, 2600, config.model, false, signal, undefined, 60_000);
+    ], false, 3000, config.solverModel, true, signal, 2048, 60_000);
     return { ...lesson, assistantMessage };
   }
 
