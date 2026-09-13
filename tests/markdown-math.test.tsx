@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MarkdownMath } from "../app/markdown-math";
+import { mathTextToPlainLabel, repairMathText } from "../lib/math-text";
 
 test("bare matrix environments and capital Greek symbols render", () => {
   const html = renderToStaticMarkup(<MarkdownMath content={String.raw`样本空间为 \Omega。矩阵 A=\begin{pmatrix}1&2\\3&4\end{pmatrix}。`} />);
@@ -120,4 +121,53 @@ test("double-escaped cases and common set notation are repaired", () => {
   assert.match(html, /ℝ|mathbb/);
   assert.doesNotMatch(html, /class="katex-error"/);
   assert.doesNotMatch(html, /\\\\begin/);
+});
+
+test("legacy graph formulas recover sigma algebra and conditional probability", () => {
+  const legacySigma = String.raw`$\\-代数`;
+  const legacyProbability = "ℙ(B|A) = fracℙ(A \\∩ B)ℙ(A)";
+  assert.match(repairMathText(legacySigma), /\\sigma-代数/);
+  assert.match(repairMathText(legacyProbability), /\\frac\{\\mathbb\{P\}\(A\\cap B\)\}\{\\mathbb\{P\}\(A\)\}/);
+  assert.equal(mathTextToPlainLabel(legacySigma), "σ-代数");
+  assert.match(mathTextToPlainLabel(legacyProbability), /ℙ\(B\s*\|\s*A\).*ℙ\(A\s*∩\s*B\).*ℙ\(A\)/);
+  const html = renderToStaticMarkup(<MarkdownMath content={legacyProbability} />);
+  assert.doesNotMatch(html, /class="katex-error"/);
+});
+
+test("corrupted ext tokens and bare lim_n inf become clean math", () => {
+  const repaired = repairMathText(String.raw`$ ext{P}(ext{linsup}_{n\to\infty} A_n)$；$lim_n inf_{k≥n} a_k$`);
+  assert.match(repaired, /\\mathbb\{P\}/);
+  assert.match(repaired, /\\limsup/);
+  assert.match(repaired, /\\liminf_\{n\\to\\infty\}/);
+  assert.doesNotMatch(repaired, /ext\{|lim_n inf_/);
+});
+
+test("legacy malformed set commands are repaired before display", () => {
+  const repaired = repairMathText(String.raw`igcup_n igcap_{k≥n} A_k and orall x`);
+  assert.match(repaired, /\\bigcup/);
+  assert.match(repaired, /\\bigcap/);
+  assert.match(repaired, /\\forall/);
+  assert.doesNotMatch(repaired, /(?<![A-Za-z])(?:igcup|igcap|orall)/);
+});
+
+test("repeated big operators from an earlier repair are collapsed", () => {
+  const repaired = repairMathText(String.raw`$\\bigigcup_{i=1}^n A_i$ and $\\bigigcap_{k=n}^∞ A_k$`);
+  assert.doesNotMatch(repaired, /bigig/);
+  assert.match(repaired, /\\bigcup/);
+  assert.match(repaired, /\\bigcap/);
+});
+
+test("bare liminf and limsup in diagnostic questions render cleanly", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownMath content={"能否写出 liminf A_n = union_n intersection_{k≥n} A_k，并比较 limsup P(A_n)。"} />,
+  );
+  assert.match(html, /class="katex/);
+  assert.doesNotMatch(html, /ext\{|class="katex-error"|>liminf</);
+});
+
+test("limsup and liminf variants become valid math commands", () => {
+  const repaired = repairMathText(String.raw`$ ext{linsup}_{n\to\infty} A_n$；$\\lim_n inf_{k≥n} a_k$`);
+  assert.match(repaired, /\\limsup/);
+  assert.match(repaired, /\\liminf_\{n\\to\\infty\}/);
+  assert.doesNotMatch(repaired, /ext\{linsup\}|\\lim_n inf_/);
 });

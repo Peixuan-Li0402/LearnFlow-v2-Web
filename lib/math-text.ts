@@ -63,6 +63,37 @@ export function repairMathText(value: string) {
 
   for (const [pattern, replacement] of spokenCommands) repaired = repaired.replace(pattern, replacement);
 
+  // Older course graphs contain an escaped placeholder such as "\\-代数"
+  // where OCR dropped the sigma command. Recover the conventional term while
+  // keeping the rest of the sentence untouched.
+  repaired = repaired
+    .replace(/\$\\+\$[-–—]\s*(?:代数|域)/gu, "σ-代数")
+    .replace(/\$\\+\$[-–—]\s*algebra/giu, "σ-algebra")
+    .replace(/\\+[-–—]\s*(?:代数|域)/gu, "\\sigma-代数")
+    .replace(/\\+[-–—]\s*algebra/giu, "\\sigma-algebra")
+    .replace(/\\([∩∪])/gu, (_, symbol: string) => symbol === "∩" ? "\\cap" : "\\cup")
+    .replace(/\\bigigcup/giu, "\\bigcup")
+    .replace(/\\bigigcap/giu, "\\bigcap")
+    .replace(/\\?\s*ext\s*\{\s*lin\s*sup\s*\}/giu, "\\limsup")
+    .replace(/\\?\s*ext\s*\{\s*lin\s*inf\s*\}/giu, "\\liminf")
+    .replace(/\\?\s*ext\s*\{\s*P\s*\}/gu, "\\mathbb{P}")
+    .replace(/\\?\s*ext\s*\{\s*([A-Za-z]+)\s*\}/gu, "\\text{$1}")
+    .replace(/(?:\\b){2,}(?=ig(?:cup|cap))/giu, "\\b")
+    .replace(/(?:\\f){2,}(?=orall)/giu, "\\f")
+    .replace(/(?<![A-Za-z\\])\\?\s*igcup(?=$|[\s_{}()[\],.;:，。；：])/giu, "\\bigcup")
+    .replace(/(?<![A-Za-z\\])\\?\s*igcap(?=$|[\s_{}()[\],.;:，。；：])/giu, "\\bigcap")
+    .replace(/(?<![A-Za-z\\])\\?\s*orall(?=$|[\s_{}()[\],.;:，。；：])/giu, "\\forall")
+    .replace(/(?<![A-Za-z\\])lim\s*sup\b/giu, "\\limsup")
+    .replace(/(?<![A-Za-z\\])lim\s*inf\b/giu, "\\liminf")
+    .replace(/(?<![A-Za-z\\])lin\s*sup\b/giu, "\\limsup")
+    .replace(/(?<![A-Za-z\\])lin\s*inf\b/giu, "\\liminf")
+    .replace(/\\lim\s*_\s*n\s*inf\s*_\s*\{?\s*k\s*[≥>]\s*n\}?/giu, "\\liminf_{n\\to\\infty}")
+    .replace(/(?<![A-Za-z\\])lim\s*_\s*n\s*inf\s*_\s*\{?\s*k\s*[≥>]\s*n\}?/giu, "\\liminf_{n\\to\\infty}")
+    .replace(/(?<![A-Za-z\\])union(?=\s*[_\{])/giu, "\\bigcup")
+    .replace(/(?<![A-Za-z\\])intersection(?=\s*[_\{])/giu, "\\bigcap")
+    .replace(/(?:ℙ|\\mathbb\{P\})\s*\(\s*B\s*[|｜]\s*A\s*\)\s*=\s*(?:\\?frac|frac)\s*(?:ℙ|\\mathbb\{P\})\s*\(\s*A\s*\\?cap\s*B\s*\)\s*(?:ℙ|\\mathbb\{P\})\s*\(\s*A\s*\)/gu,
+      "\\mathbb{P}(B\\mid A)=\\frac{\\mathbb{P}(A\\cap B)}{\\mathbb{P}(A)}");
+
   return repaired
     .replace(
       /([A-Za-z0-9}\]])\s+\bin\b\s+(?=\\(?:mathbb|mathcal)\{|[\[(]|[A-Z](?:\b|_))/g,
@@ -86,9 +117,9 @@ const plainSymbols: Array<[RegExp, string]> = [
   [/\\mathcal\{F\}/g, "𝓕"], [/\\Omega/g, "Ω"], [/\\omega/g, "ω"],
   [/\\Lambda/g, "Λ"], [/\\lambda/g, "λ"], [/\\varepsilon|\\epsilon/g, "ε"],
   [/\\alpha/g, "α"], [/\\beta/g, "β"], [/\\gamma/g, "γ"], [/\\delta/g, "δ"],
-  [/\\theta/g, "θ"], [/\\mu/g, "μ"], [/\\pi/g, "π"], [/\\rho/g, "ρ"],
-  [/\\sigma/g, "σ"], [/\\phi/g, "φ"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
-  [/\\notin/g, "∉"], [/\\infty/g, "∞"], [/\\in\b/g, "∈"], [/\\neq/g, "≠"],
+  [/\\theta/g, "θ"], [/\\mu/g, "μ"], [/\\pi/g, "π"], [/\\rho/g, "ρ"], [/\\sigma/g, "σ"],
+  [/\\phi/g, "φ"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
+  [/\\notin/g, "∉"], [/\\infty/g, "∞"], [/\\in\b/g, "∈"], [/\\mid/g, "|"], [/\\neq/g, "≠"],
   [/\\leq?/g, "≤"], [/\\geq?/g, "≥"], [/\\neg/g, "¬"], [/\\Rightarrow/g, "⇒"],
   [/\\Leftrightarrow/g, "⇔"], [/\\times/g, "×"], [/\\cdot/g, "·"],
   [/\\bigcup/g, "⋃"], [/\\bigcap/g, "⋂"], [/\\cup\b/g, "∪"], [/\\cap\b/g, "∩"],
@@ -106,7 +137,11 @@ export function mathTextToPlainLabel(value: string) {
     .replace(/\\(?:text|operatorname|mathrm|mathbf|boldsymbol)\{([^{}]*)\}/g, "$1");
   for (const [pattern, replacement] of plainSymbols) label = label.replace(pattern, replacement);
   return label
+    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)")
     .replace(/\\quad/g, " ")
+    .replace(/\\([≥≤≠∈∪∩⋃⋂])/g, "$1")
+    .replace(/\bt(limsup|liminf)\b/gi, "$1")
+    .replace(/\b(limsup|liminf)\s+t\b/gi, "$1")
     .replace(/\\([A-Za-z]+)/g, "$1")
     .replace(/[{}]/g, "")
     .replace(/\uE010/g, "{").replace(/\uE011/g, "}")

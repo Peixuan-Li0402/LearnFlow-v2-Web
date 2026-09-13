@@ -188,7 +188,7 @@ export function CourseWorkspace() {
   const [courses, setCourses] = useState<CourseSpace[]>([]);
   const [courseId, setCourseId] = useState("");
   const [workspace, setWorkspace] = useState<CourseWorkspacePayload | null>(null);
-  const [view, setView] = useState<View>("materials");
+  const [view, setView] = useState<View>(initialViewFromLocation);
   const [navigationReady, setNavigationReady] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>("tree");
   const [selectedNode, setSelectedNode] = useState<KnowledgeNode | null>(null);
@@ -306,9 +306,22 @@ export function CourseWorkspace() {
       setRelatedProblems([]);
       return;
     }
-    void fetchJson<{ problems: typeof relatedProblems }>(`/api/knowledge-nodes/${selectedNode.id}/related-problems`)
-      .then((payload) => setRelatedProblems(payload.problems))
-      .catch(() => setRelatedProblems([]));
+    let cancelled = false;
+    void Promise.all([
+      fetchJson<{ problems: typeof relatedProblems }>(`/api/knowledge-nodes/${selectedNode.id}/related-problems`),
+      fetchJson<{ artifact: ExplanationArtifact | null }>(`/api/knowledge-nodes/${selectedNode.id}/explain`),
+    ]).then(([related, explanation]) => {
+      if (cancelled) return;
+      setRelatedProblems(related.problems);
+      setArtifact(explanation.artifact?.sections?.length ? explanation.artifact : null);
+    }).catch(() => {
+      if (cancelled) return;
+      setRelatedProblems([]);
+      setArtifact(null);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedNode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -631,6 +644,7 @@ export function CourseWorkspace() {
 
   const openNodeStudy = (node: KnowledgeNode) => {
     selectNode(node);
+    setSearch("");
     setView("study");
   };
 

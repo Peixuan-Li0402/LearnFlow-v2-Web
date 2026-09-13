@@ -8,4 +8,6 @@ test("provider payloads never reach the student", () => {
   assert.match(agentErrorMessage(new Error("model timeout")), /已停止请求/);
   assert.match(agentErrorMessage(new Error("JSON unexpected EOF")), /没有发布/);
   assert.match(agentErrorMessage({status:429}), /繁忙/);
+  assert.doesNotMatch(agentErrorMessage(new Error("upstream credential secret-value rejected")), /secret-value/);
+  assert.doesNotMatch(agentErrorMessage(new Error("internal host private-service failed")), /private-service/);
 });

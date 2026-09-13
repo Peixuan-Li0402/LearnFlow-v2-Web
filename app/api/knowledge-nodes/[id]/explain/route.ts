@@ -12,6 +12,14 @@ import { hybridEvidenceForNode } from "@/lib/course-retrieval";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+export async function GET(_request: Request, context: RouteContext) {
+  const { id } = await context.params;
+  const node = await getKnowledgeNode(id);
+  if (!node) return NextResponse.json({ error: "知识点不存在。" }, { status: 404 });
+  const artifact = await getExplanationArtifact(id);
+  return NextResponse.json({ artifact: artifact?.sections?.length ? artifact : null, cached: Boolean(artifact?.sections?.length) });
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const body = (await request.json().catch(() => ({}))) as { refresh?: boolean };

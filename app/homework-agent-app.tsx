@@ -40,9 +40,10 @@ import type {
 import { uid } from "@/lib/agent-types";
 import type { CourseSpace } from "@/lib/course-types";
 import { emptyProject } from "@/lib/empty-project";
-import { normalizeAgentResponse, normalizeProblems, normalizeProjectState } from "@/lib/normalize-agent";
+import { normalizeAgentResponse, normalizeProblems, normalizeProjectState, repairModelText } from "@/lib/normalize-agent";
 import { extractVisualDocumentText } from "@/lib/client-pdf-vision";
 import { buildReferenceDigest } from "@/lib/reference-context";
+import { mathTextToPlainLabel } from "@/lib/math-text";
 
 const MarkdownMath = dynamic(
   () => import("@/app/markdown-math").then((module) => module.MarkdownMath),
@@ -202,6 +203,25 @@ function contextForProblem(project: ProjectState, problemId: string): ProjectSta
 
 function normalizeProjectForRelease(project: ProjectState): ProjectState {
   const normalized = normalizeProjectState(project);
+  const problemById = new Map(normalized.problems.map((problem) => [problem.id, problem]));
+  const problemTeachingMessages = Object.fromEntries(
+    Object.entries(normalized.problemTeachingMessages || {}).map(([problemId, messages]) => {
+      const rawProblem = problemById.get(problemId)?.rawText || "";
+      const cleaned = messages
+        .filter((message) => {
+          if (message.role !== "assistant") return true;
+          // Old persisted turns may contain the known OCR corruption (for
+          // example, a sample space Ω rewritten as θ or \bigcup mangled into
+          // `igcup`). Do not show those turns after reload; a fresh answer is
+          // generated from the verified blueprint when the learner asks.
+          const legacyCorruption = /igcup|igcap|orall/.test(message.content)
+            || (/样本空间[\s\S]{0,160}θ\s*=/.test(message.content) && /Ω|样本空间|事件域/.test(rawProblem));
+          return !legacyCorruption;
+        })
+        .map((message) => ({ ...message, content: repairModelText(message.content) }));
+      return [problemId, cleaned];
+    }),
+  );
   const teachingMessages = normalized.teachingMessages
     .filter((message) => !/当前未配置|结构化演示引擎|Agent 暂时/.test(message.content))
     .map((message) => {
@@ -222,6 +242,7 @@ function normalizeProjectForRelease(project: ProjectState): ProjectState {
       ? { ...problem, status: "NOT_STARTED" as const }
       : problem),
     teachingMessages,
+    problemTeachingMessages,
     sideMessages: normalized.sideMessages.filter(
       (message) => !/这里可以随时问基础概念|这个解释只用于当前对照/.test(message.content),
     ),
@@ -487,13 +508,15 @@ export function HomeworkAgentApp() {
     submit();
   };
 
-  const updateFromAgent = (response: AgentResponse, targetProblem = currentProblem) => {
+  const updateFromAgent = (response: AgentResponse, targetProblem = currentProblem, replaceAnswer = false) => {
     if (!targetProblem) return;
     setProject((current) => {
       const assistant = response.assistantMessage
         ? makeMessage("assistant", response.assistantMessage, response.stage)
         : null;
-      const existingMessages = current.problemTeachingMessages?.[targetProblem.id] || [];
+      const existingMessages = replaceAnswer
+        ? (current.problemTeachingMessages?.[targetProblem.id] || []).filter((item) => item.role === "user").slice(-1)
+        : current.problemTeachingMessages?.[targetProblem.id] || [];
       const freshAssistant = assistant && !repeatsLastAssistant(assistant.content, existingMessages) ? assistant : null;
       const existingKnowledge = current.problemKnowledgeCheckpoints?.[targetProblem.id] || [];
       const incomingKnowledge = response.knowledgeCheckpoints
@@ -512,7 +535,9 @@ export function HomeworkAgentApp() {
         teachingStage: response.stage || current.teachingStage,
         selectedMethod: response.selectedMethod || current.selectedMethod,
         progress: response.progress ?? current.progress,
-        answerBlocks: mergeBlocks(current.answerBlocks, response.answerBlocks, targetProblem.id),
+        answerBlocks: replaceAnswer
+          ? [...current.answerBlocks.filter((block) => block.problemId !== targetProblem.id), ...(response.answerBlocks || [])]
+          : mergeBlocks(current.answerBlocks, response.answerBlocks, targetProblem.id),
         problemTeachingMessages: {
           ...current.problemTeachingMessages,
           [targetProblem.id]: [...existingMessages, ...(freshAssistant ? [freshAssistant] : [])],
@@ -544,6 +569,15 @@ export function HomeworkAgentApp() {
     const message = (messageOverride ?? mainInput).trim();
     if (!message || !currentProblem || busy) return;
     const targetProblem = currentProblem;
+    const forceFreshAnswer = interactionOverride?.kind === "DIRECT_ANSWER";
+    if (forceFreshAnswer) {
+      setProject((current) => ({
+        ...current,
+        answerBlocks: current.answerBlocks.filter((block) => block.problemId !== targetProblem.id),
+        problemTeachingMessages: { ...current.problemTeachingMessages, [targetProblem.id]: [] },
+        problemSolutionBlueprints: Object.fromEntries(Object.entries(current.problemSolutionBlueprints || {}).filter(([problemId]) => problemId !== targetProblem.id)),
+      }));
+    }
     const requestId = ++requestSequence.current;
     const controller = new AbortController();
     mainRequestRef.current?.controller.abort();
@@ -571,7 +605,14 @@ export function HomeworkAgentApp() {
         }));
         setRollbackMode(false);
       } else {
-        const requestProject = contextOverride || currentProjectContext;
+        const requestProjectBase = contextOverride || currentProjectContext;
+        const requestProject = forceFreshAnswer
+          ? {
+              ...requestProjectBase,
+              answerBlocks: [],
+              problemSolutionBlueprints: Object.fromEntries(Object.entries(requestProjectBase.problemSolutionBlueprints || {}).filter(([problemId]) => problemId !== targetProblem.id)),
+            }
+          : requestProjectBase;
         const response = await agentCall({
           action: "chat",
           problem: targetProblem,
@@ -584,7 +625,7 @@ export function HomeworkAgentApp() {
         if (repeatsLastAssistant(response.assistantMessage, currentTeachingMessages)) {
           setToast("本轮没有生成新的讲解，已保留当前进度；请继续或换一种提问。");
         }
-        updateFromAgent(response, targetProblem);
+        updateFromAgent(response, targetProblem, forceFreshAnswer);
         if (response.warning) setToast(response.warning);
       }
     } catch (error) {
@@ -1509,7 +1550,7 @@ export function HomeworkAgentApp() {
                   <div><Network size={16} /><strong>本题知识路径</strong>{knowledgeLinking && <span>正在匹配课程图谱…</span>}</div>
                   <div>
                     {knowledgeLinks.slice(0, 5).map((link) => (
-                      <a key={link.nodeId} href={`/learn?courseId=${knowledgeCourseId}&view=study&nodeId=${link.nodeId}`} title={link.evidence}>
+                      <a key={link.nodeId} href={`/learn?courseId=${knowledgeCourseId}&view=study&nodeId=${link.nodeId}`} title={mathTextToPlainLabel(link.evidence)}>
                         {link.nodeTitle}<ChevronRight size={13} />
                       </a>
                     ))}

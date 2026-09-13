@@ -7,7 +7,12 @@ import { agentErrorMessage } from "@/lib/agent-error";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as AgentRequest;
+    let body: AgentRequest;
+    try {
+      body = (await request.json()) as AgentRequest;
+    } catch {
+      return NextResponse.json({ error: "请求格式不正确，请刷新后重试。" }, { status: 400 });
+    }
     if (!body || !["start_problem", "chat", "side_chat", "analyze_rollback", "parse_assignment"].includes(body.action)) {
       return NextResponse.json({ error: "不支持的操作。" }, { status: 400 });
     }

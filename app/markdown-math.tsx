@@ -44,7 +44,7 @@ function repairMalformedMathSource(value: string) {
 function wrapBareLatex(value: string) {
   value = value.replace(/\\(?:Omega|Gamma|Delta|Theta|Lambda|Pi|Sigma|Phi|Psi)\b/g, (math) => `$${math}$`);
   return value.replace(
-    /((?:[A-Za-z0-9_{}()[\]+\-*/^=<>.,'′]+\s*)?\\(?:frac|sqrt|exp|ln|log|lim|int|sum|prod|sin|cos|tan|arcsin|arccos|arctan|left|right|operatorname|mathrm|mathbf|boldsymbol|mathbb|mathcal|text|times|cdot|to|mapsto|sim|approx|equiv|infty|leq|geq|neq|neg|pm|mp|alpha|beta|gamma|epsilon|varepsilon|delta|theta|lambda|mu|pi|rho|sigma|phi|omega|forall|exists|in|notin|subset|subseteq|supset|supseteq|partial|nabla|Rightarrow|Leftarrow|Leftrightarrow|leftrightarrow|overline|underline)[A-Za-z0-9\\_{}()[\]+\-*/^=<>.,'′\s]*)/g,
+    /((?:[A-Za-z0-9_{}()[\]+\-*/^=<>.,'′≥≤≠∈∪∩]+\s*)?\\(?:liminf|limsup|frac|sqrt|exp|ln|log|lim|int|sum|prod|bigcup|bigcap|sin|cos|tan|arcsin|arccos|arctan|left|right|operatorname|mathrm|mathbf|boldsymbol|mathbb|mathcal|text|times|cdot|to|mapsto|sim|approx|equiv|infty|leq|geq|neq|neg|pm|mp|alpha|beta|gamma|epsilon|varepsilon|delta|theta|lambda|mu|pi|rho|sigma|phi|omega|forall|exists|in|notin|subset|subseteq|supset|supseteq|partial|nabla|Rightarrow|Leftarrow|Leftrightarrow|leftrightarrow|overline|underline)[A-Za-z0-9\\_{}()[\]+\-*/^=<>.,'′≥≤≠∈∪∩\s]*)/g,
     (_, math: string) => ` $${math.trim()}$ `,
   );
 }
@@ -60,6 +60,8 @@ function repairSpokenMathSymbols(value: string) {
   return repairMathText(value)
     .replace(/(?<!\\)\bsum(?=\s*_)/g, "\\sum")
     .replace(/(?<!\\)\bprod(?=\s*_)/g, "\\prod")
+    .replace(/(?<!\\)\bliminf\b/g, "\\liminf")
+    .replace(/(?<!\\)\blimsup\b/g, "\\limsup")
     .replace(/(?<!\\)\blim(?=\s*_)/g, "\\lim");
 }
 

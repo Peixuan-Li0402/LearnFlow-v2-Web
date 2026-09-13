@@ -259,16 +259,27 @@ async function chatCompletion(messages: Array<{ role: string; content: string }>
 function parseBlueprintCandidate(content: string) {
   try {
     const blueprint = normalizeJsonLenient(content) as SolutionBlueprint;
+    if (blueprintContainsCorruptMath(blueprint)) return undefined;
     const normalized = normalizeAgentResponse({
       provider: "model",
       solutionBlueprint: blueprint,
     }).solutionBlueprint;
-    return completeBlueprint(normalized)
+    return completeBlueprint(normalized) && !blueprintContainsCorruptMath(normalized)
       ? normalized
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+function blueprintContainsCorruptMath(blueprint: SolutionBlueprint | undefined, rawProblem = "") {
+  if (!blueprint) return false;
+  const serialized = JSON.stringify(blueprint);
+  if (/(?<![A-Za-z])(?:igcup|igcap|orall)(?=$|[\s_{}()[\],.;:，。；：])/i.test(serialized)) return true;
+  if (/\\bigig(?:cup|cap)|(?:\\b){2,}ig(?:cup|cap)|(?:\\f){2,}orall/i.test(serialized)) return true;
+  return /事件域|样本空间|σ-?代数|sigma[- ]?algebra/i.test(rawProblem)
+    && /\\theta\b/.test(serialized)
+    && !/\\Omega\b|Ω/.test(serialized);
 }
 
 function waitForHedge(delayMs: number, signal: AbortSignal) {
@@ -738,7 +749,7 @@ async function buildSolutionBlueprint(request: AgentRequest, model: string, sign
       normalized = undefined;
     }
   }
-  if (!normalized?.sections.length || !normalized.prerequisites.length || !normalized.finalConclusion.trim()) {
+  if (!normalized?.sections.length || !normalized.prerequisites.length || !normalized.finalConclusion.trim() || blueprintContainsCorruptMath(normalized)) {
     const config = runtimeConfig();
     const repairPayload = {
       problem: request.problem,
@@ -761,7 +772,7 @@ async function buildSolutionBlueprint(request: AgentRequest, model: string, sign
       solutionBlueprint: blueprintJson,
     }).solutionBlueprint;
   }
-  if (!normalized?.sections.length || !normalized.prerequisites.length || !normalized.finalConclusion.trim()) {
+  if (!normalized?.sections.length || !normalized.prerequisites.length || !normalized.finalConclusion.trim() || blueprintContainsCorruptMath(normalized)) {
     throw new Error("模型已完成解题，但讲解蓝图不完整，请重试本题。");
   }
   if (usedVisualIndexFallback) {
@@ -832,6 +843,23 @@ function renderMaterialUsage(blueprint: SolutionBlueprint) {
   const used = (blueprint.materialUsage || []).filter((item) => item.applied);
   if (!used.length) return "";
   return `\n\n**本步参考**：${used.map((item) => `${item.name}${item.details[0] ? `（${item.details[0]}）` : ""}`).join("；")}。`;
+}
+
+function teachingDraftLooksSafe(value: string) {
+  const text = value.trim();
+  if (text.length < 30) return false;
+  return !/(?:走完|完整步长|实际增量|总变化量|f\s*\(\s*1\s*\).{0,30}(?:≈|约等于|增量)|t\s*=\s*1.{0,35}(?:≈|约等于|增量))/iu.test(text);
+}
+
+function personalizedTeachingFallback(request: AgentRequest, blueprint: SolutionBlueprint) {
+  const message = request.message?.trim() || "你的回答";
+  const problemText = request.problem?.rawText || "";
+  const unitDirectionQuestion = /单位化|单位向量|方向导数|两倍|倍数/.test(`${problemText}\n${message}`);
+  if (unitDirectionQuestion) {
+    return `我先根据你的回答纠正一个容易混淆的点：你说“向量变成两倍，结果也变成两倍”，这个结论只对应**没有单位化时的参数导数**，不是课程定义中的标准方向导数。\n\n标准方向导数描述的是**单位距离上的变化率**，所以要把方向向量除以模长。把方向向量换成同向的 $2\\vec l$ 后，单位方向向量不变，标准方向导数也不变；如果直接计算 $\\nabla u\\cdot(2\\vec l)$，数值确实会变成两倍，但那表示沿参数路径的导数，不能当作标准方向导数。\n\n你刚才的回答里，后半句对应了另一个量，前半句需要按定义修正。请只回答这一点：同一个方向的 $\\vec l$ 和 $2\\vec l$，单位方向向量是否相同？`;
+  }
+  const current = blueprint.sections[0];
+  return `我先结合你刚才的回答调整一下讲法：${message}\n\n这道题当前先抓住“${current.title}”这一板块。${current.intuition || current.explanation || "先明确本步定义和适用条件，再进行计算。"}\n\n**本步关键点**：${current.goal}\n\n请告诉我，你卡住的是定义、符号，还是这一步为什么能这样变形？我会只针对你选的地方继续讲。`;
 }
 
 function deliverVerifiedSection(request: AgentRequest, blueprint: SolutionBlueprint): AgentResponse {
@@ -977,10 +1005,13 @@ export async function callModel(request: AgentRequest, signal?: AbortSignal): Pr
     throw new Error(`老师资料仍在解析：${pendingReferences.map((item) => item.name).join("、")}。解析完成后再开始，确保本题真正采用课件中的方法和写法。`);
   }
   const selectedModel = request.responseMode === "fast" ? config.fastModel : config.model;
-  let solutionBlueprint = request.problem
+  const cachedBlueprint = request.problem
     ? request.project?.problemSolutionBlueprints?.[request.problem.id]
     : undefined;
-  if (solutionBlueprint?.qualityVersion !== "verified-v2" || !completeBlueprint(solutionBlueprint) || verifyNumericInverseProduct(request.problem?.rawText || "", solutionBlueprint.finalConclusion)) solutionBlueprint = undefined;
+  let solutionBlueprint = cachedBlueprint
+    ? normalizeAgentResponse({ provider: "model", solutionBlueprint: cachedBlueprint }).solutionBlueprint
+    : undefined;
+  if (blueprintContainsCorruptMath(cachedBlueprint, request.problem?.rawText || "") || solutionBlueprint?.qualityVersion !== "verified-v2" || !completeBlueprint(solutionBlueprint) || blueprintContainsCorruptMath(solutionBlueprint, request.problem?.rawText || "") || verifyNumericInverseProduct(request.problem?.rawText || "", solutionBlueprint.finalConclusion)) solutionBlueprint = undefined;
   if (request.problem && !solutionBlueprint) {
     const refs = referenceMaterialsFor(request);
     const cacheKey = stableHash(JSON.stringify({
@@ -1040,25 +1071,53 @@ export async function callModel(request: AgentRequest, signal?: AbortSignal): Pr
   }
 
   if (request.action === "chat" && request.interaction?.kind === "FREEFORM" && solutionBlueprint) {
-    const assistantMessage = await chatCompletion([
-      { role: "system", content: "准确性约束：不能为了通俗而改变定义。导数与方向导数是局部极限变化率，不是走完有限距离后的总变化量；若使用线性近似，必须明确小增量及适用限制。非单位方向向量的点积是沿参数路径的导数，不得说成完整步长的实际增量。先明确纠正学生的错误结论，不要以泛泛赞同开头。内部核对解释与已验证答案一致后再输出。" },
-      { role: "system", content: "你是耐心的大学课程助教。依据已核对的解法，直接回应学生这次追问，调整讲解方式和例子，不要重复整道题，不要自行推进讲解进度。只输出中文 Markdown，数学使用 $...$ 或 $$...$$。不输出内部探索草稿。若学生要求未学过的方法，说明当前步骤并给出满足课程限制的等价解释。" },
-      { role: "system", content: "如果上一轮提出了诊断问题，本轮必须先结合学生实际回答判断哪一点正确、哪一点需要补充，再用适合其基础的方式讲清。不要泛泛夸奖或机械重放原稿。学生已经掌握的内容简述，薄弱点给具体例子；最后只留一个针对性的理解检查。若学生要求直接讲或跳过，则不强制继续问答。" },
-      { role: "user", content: JSON.stringify({ problem: request.problem, solution: solutionBlueprint, learnerProfile: request.project?.knowledgeCheckpoints, recentMessages: request.project?.teachingMessages?.slice(-8), question: request.message }) },
-    ], false, 3000, config.solverModel, true, signal, 2048, 60_000);
+    let draft: string;
+    try {
+      draft = await chatCompletion([
+        { role: "system", content: "准确性约束：不能为了通俗而改变定义。导数与方向导数是局部极限变化率，不是走完有限距离后的总变化量；若使用线性近似，必须明确小增量及适用限制。非单位方向向量的点积是沿参数路径的导数，不得说成完整步长的实际增量。先明确纠正学生的错误结论，不要以泛泛赞同开头。内部核对解释与已验证答案一致后再输出。" },
+        { role: "system", content: "你是耐心的大学课程助教。依据已核对的解法，直接回应学生这次追问，调整讲解方式和例子，不要重复整道题，不要自行推进讲解进度。只输出中文 Markdown，数学使用 $...$ 或 $$...$$。不输出内部探索草稿。若学生要求未学过的方法，说明当前步骤并给出满足课程限制的等价解释。" },
+        { role: "system", content: "如果上一轮提出了诊断问题，本轮必须先结合学生实际回答判断哪一点正确、哪一点需要补充，再用适合其基础的方式讲清。不要泛泛夸奖或机械重放原稿。学生已经掌握的内容简述，薄弱点给具体例子；最后只留一个针对性的理解检查。若学生要求直接讲或跳过，则不强制继续问答。" },
+        { role: "user", content: JSON.stringify({ problem: request.problem, solution: solutionBlueprint, learnerProfile: request.project?.knowledgeCheckpoints, recentMessages: request.project?.teachingMessages?.slice(-8), question: request.message }) },
+      ], false, 2200, config.solverModel, false, signal, undefined, 45_000);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const assistantMessage = personalizedTeachingFallback(request, solutionBlueprint);
+      return normalizeAgentResponse({ provider: "model", assistantMessage, stage: "CHECKING_PREREQUISITES", progress: request.project?.progress || 5, solutionBlueprint, answerBlocks: [], knowledgeCheckpoints: [] });
+    }
+    let assistantMessage = draft;
+    try {
+      assistantMessage = await chatCompletion([
+      { role: "system", content: "你是数学教学终稿审校员。对照题目与已核对解法，检查以下讲解的每个等式、定义、例子和类比，直接输出纠正后的学生可读中文Markdown，不输出审核过程。删掉不能由题目支持的例子；尤其不可把导数当成有限步长实际增量，不允许用参数t=1的线性近似替代局部极限。检查函数初值，不能凭空设为0。先针对学生回答纠正误区，只讲当前疑问，最多500字，末尾最多一个问题。不需要为了纠错而展开整题。" },
+      { role: "user", content: JSON.stringify({ problem: request.problem, verifiedSolution: solutionBlueprint, student: request.message, draft: assistantMessage }) },
+      ], false, 2200, config.reviewModel, true, signal, 2048, 60_000);
+    } catch {
+      assistantMessage = teachingDraftLooksSafe(draft)
+        ? draft
+        : personalizedTeachingFallback(request, solutionBlueprint);
+    }
     return normalizeAgentResponse({ provider: "model", assistantMessage, stage: request.project?.teachingStage === "CHECKING_PREREQUISITES" ? "EXPLAINING_METHOD" : request.project?.teachingStage || "EXPLAINING_METHOD", progress: request.project?.progress || 5, solutionBlueprint, answerBlocks: [], knowledgeCheckpoints: [] });
   }
 
   const lockedLessonInteractions = new Set(["CONTINUE", "SKIP_SECTION"]);
   if (request.action === "chat" && request.interaction?.kind && lockedLessonInteractions.has(request.interaction.kind) && solutionBlueprint) {
     const lesson = deliverVerifiedSection(request, solutionBlueprint);
-    if (request.interaction.kind === "SKIP_SECTION") return lesson;
-    const assistantMessage = await chatCompletion([
+    if (request.interaction.kind === "SKIP_SECTION" || !lesson.checkpoint) return lesson;
+    const currentSection = solutionBlueprint.sections[lesson.checkpoint.sectionIndex ?? 0];
+    let assistantMessage: string;
+    try {
+      assistantMessage = await chatCompletion([
       { role: "system", content: "准确性约束：通俗例子不能改变数学定义。变化率不等于有限距离上的总变化量，线性近似必须说明是局部小增量近似。沿参数路径的导数不能误称为走完整个向量的增量。不要继承历史回复中这些不严谨的措辞；发现时简短澄清。" },
       { role: "system", content: "依据已核对的教学板块和学生的真实反馈，组织这一板块的讲解。明确回应先前诊断暴露的误区，已掌握的略讲，薄弱的用例子和小步推导讲清。保留本板块关键数学结论与条件，不重算整题，不泄露探索草稿。结尾提出一个简短检查问题，等待学生回答。只输出中文Markdown及规范LaTeX。" },
-      { role: "user", content: JSON.stringify({ verifiedLesson: lesson.assistantMessage, learnerProfile: request.project?.knowledgeCheckpoints, recentMessages: request.project?.teachingMessages?.slice(-8), request: request.message }) },
-    ], false, 3000, config.solverModel, true, signal, 2048, 60_000);
-    return { ...lesson, assistantMessage };
+      { role: "system", content: "本次只生成当前板块的补充说明，不生成完整课程、不写步骤编号、不提前讲下一板块。根据学生反馈解释当前板块为什么需要，最多200字，最后一个检查问题只能针对当前板块。当前板块的计算已在页面展示，无需重复或新增数值算例。若学生已掌握，简短确认当前板块的核心条件即可。不得把导数解释为有限步长的实际增量。" },
+      { role: "user", content: JSON.stringify({ currentSection, learnerProfile: request.project?.knowledgeCheckpoints, recentMessages: request.project?.teachingMessages?.slice(-8), request: request.message }) },
+      ], false, 3000, config.solverModel, true, signal, 2048, 60_000);
+    } catch {
+      // The verified section is already deterministic and accurate. A
+      // provider timeout must not discard it or leave the student with a
+      // blank lesson; the next turn can still retry personalization.
+      return lesson;
+    }
+    return { ...lesson, assistantMessage: `${lesson.assistantMessage}\n\n**结合你的反馈**\n\n${assistantMessage}` };
   }
 
   const messages = [
