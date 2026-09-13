@@ -1,0 +1,1 @@
+CREATE INDEX `materials_project_idx` ON `materials` (`project_id`);

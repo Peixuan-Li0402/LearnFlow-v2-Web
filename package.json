@@ -1,0 +1,57 @@
+{
+  "name": "learnflow-homework-agent",
+  "version": "2.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "node scripts/run-vinext.mjs dev",
+    "build": "node scripts/run-vinext.mjs build",
+    "start": "node scripts/run-cloudflare-preview.mjs",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/model-driven.test.mjs && node --import tsx --test tests/*.test.ts tests/*.test.tsx",
+    "typecheck": "tsc --noEmit",
+    "test:pdf": "tsx scripts/verify-pdf-inputs.ts",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .wrangler --ignore-pattern .vinext",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@antv/g6": "^5.1.1",
+    "drizzle-orm": "0.45.2",
+    "jsonrepair": "^3.15.0",
+    "katex": "^0.17.0",
+    "lucide-react": "^1.24.0",
+    "markmap-lib": "^0.18.12",
+    "markmap-view": "^0.18.12",
+    "next": "^16.2.10",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.7.284",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.44.0",
+    "@cloudflare/workers-types": "^5.20260714.1",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "eslint-config-next": "^16.2.10",
+    "react-server-dom-webpack": "19.2.6",
+    "tailwindcss": "4.2.1",
+    "tsx": "^4.23.0",
+    "typescript": "5.9.3",
+    "vinext": "0.0.50",
+    "vite": "^8.1.4",
+    "wrangler": "^4.110.0"
+  },
+  "type": "module"
+}
